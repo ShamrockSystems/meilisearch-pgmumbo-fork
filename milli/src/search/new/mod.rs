@@ -7,10 +7,10 @@ mod interner;
 mod limits;
 mod logger;
 pub mod matches;
-mod query_graph;
+pub mod query_graph;
 mod query_term;
 mod ranking_rule_graph;
-mod ranking_rules;
+pub mod ranking_rules;
 mod resolve_query_graph;
 mod small_bitmap;
 
@@ -33,9 +33,8 @@ use interner::{DedupInterner, Interner};
 pub use logger::visual::VisualSearchLogger;
 pub use logger::{DefaultSearchLogger, SearchLogger};
 use query_graph::{QueryGraph, QueryNode};
-use query_term::{
-    located_query_terms_from_tokens, ExtractedTokens, LocatedQueryTerm, Phrase, QueryTerm,
-};
+pub use query_term::LocatedQueryTerm;
+use query_term::{located_query_terms_from_tokens, ExtractedTokens, Phrase, QueryTerm};
 use ranking_rules::{
     BoxRankingRule, PlaceholderQuery, RankingRule, RankingRuleOutput, RankingRuleQueryTrait,
 };
@@ -96,10 +95,7 @@ impl<'ctx> SearchContext<'ctx> {
         })
     }
 
-    pub fn attributes_to_search_on(
-        &mut self,
-        attributes_to_search_on: &'ctx [String],
-    ) -> Result<()> {
+    pub fn attributes_to_search_on(&mut self, attributes_to_search_on: &[String]) -> Result<()> {
         let user_defined_searchable = self.index.user_defined_searchable_fields(self.txn)?;
         let searchable_fields_weights = self.index.searchable_fields_and_weights(self.txn)?;
         let exact_attributes_ids = self.index.exact_attributes_ids(self.txn)?;
@@ -213,7 +209,7 @@ fn resolve_maximally_reduced_query_graph(
 }
 
 #[tracing::instrument(level = "trace", skip_all, target = "search::universe")]
-fn resolve_universe(
+pub fn resolve_universe(
     ctx: &mut SearchContext<'_>,
     initial_universe: &RoaringBitmap,
     query_graph: &QueryGraph,
@@ -260,7 +256,7 @@ fn resolve_negative_phrases(
 }
 
 /// Return the list of initialised ranking rules to be used for a placeholder search.
-fn get_ranking_rules_for_placeholder_search<'ctx>(
+pub fn get_ranking_rules_for_placeholder_search<'ctx>(
     ctx: &SearchContext<'ctx>,
     sort_criteria: &Option<Vec<AscDesc>>,
     geo_strategy: geo_sort::Strategy,
@@ -386,7 +382,7 @@ fn get_ranking_rules_for_vector<'ctx>(
 }
 
 /// Return the list of initialised ranking rules to be used for a query graph search.
-fn get_ranking_rules_for_query_graph_search<'ctx>(
+pub fn get_ranking_rules_for_query_graph_search<'ctx>(
     ctx: &SearchContext<'ctx>,
     sort_criteria: &Option<Vec<AscDesc>>,
     geo_strategy: geo_sort::Strategy,
@@ -620,31 +616,14 @@ pub fn execute_vector_search(
     })
 }
 
-#[allow(clippy::too_many_arguments)]
-#[tracing::instrument(level = "trace", skip_all, target = "search::main")]
-pub fn execute_search(
+pub fn resolve_query_terms(
     ctx: &mut SearchContext<'_>,
     query: Option<&str>,
-    terms_matching_strategy: TermsMatchingStrategy,
-    scoring_strategy: ScoringStrategy,
-    exhaustive_number_hits: bool,
-    mut universe: RoaringBitmap,
-    sort_criteria: &Option<Vec<AscDesc>>,
-    distinct: &Option<String>,
-    geo_strategy: geo_sort::Strategy,
-    from: usize,
-    length: usize,
+    universe: &mut RoaringBitmap,
     words_limit: Option<usize>,
-    placeholder_search_logger: &mut dyn SearchLogger<PlaceholderQuery>,
-    query_graph_logger: &mut dyn SearchLogger<QueryGraph>,
-    time_budget: TimeBudget,
-    ranking_score_threshold: Option<f64>,
     locales: Option<&Vec<Language>>,
-) -> Result<PartialSearchResult> {
-    check_sort_criteria(ctx, sort_criteria.as_ref())?;
-
+) -> Result<(Option<Vec<LocatedQueryTerm>>, bool)> {
     let mut used_negative_operator = false;
-    let mut located_query_terms = None;
     let query_terms = if let Some(query) = query {
         let span = tracing::trace_span!(target: "search::tokens", "tokenizer_builder");
         let entered = span.enter();
@@ -690,8 +669,8 @@ pub fn execute_search(
         let ignored_documents = resolve_negative_words(ctx, Some(&universe), &negative_words)?;
         let ignored_phrases = resolve_negative_phrases(ctx, &negative_phrases)?;
 
-        universe -= ignored_documents;
-        universe -= ignored_phrases;
+        *universe -= ignored_documents;
+        *universe -= ignored_phrases;
 
         if query_terms.is_empty() {
             // Do a placeholder search instead
@@ -702,7 +681,36 @@ pub fn execute_search(
     } else {
         None
     };
+    Ok((query_terms, used_negative_operator))
+}
 
+#[allow(clippy::too_many_arguments)]
+#[tracing::instrument(level = "trace", skip_all, target = "search::main")]
+pub fn execute_search(
+    ctx: &mut SearchContext<'_>,
+    query: Option<&str>,
+    terms_matching_strategy: TermsMatchingStrategy,
+    scoring_strategy: ScoringStrategy,
+    exhaustive_number_hits: bool,
+    mut universe: RoaringBitmap,
+    sort_criteria: &Option<Vec<AscDesc>>,
+    distinct: &Option<String>,
+    geo_strategy: geo_sort::Strategy,
+    from: usize,
+    length: usize,
+    words_limit: Option<usize>,
+    placeholder_search_logger: &mut dyn SearchLogger<PlaceholderQuery>,
+    query_graph_logger: &mut dyn SearchLogger<QueryGraph>,
+    time_budget: TimeBudget,
+    ranking_score_threshold: Option<f64>,
+    locales: Option<&Vec<Language>>,
+) -> Result<PartialSearchResult> {
+    check_sort_criteria(ctx, sort_criteria.as_ref())?;
+
+    let (query_terms, used_negative_operator) =
+        resolve_query_terms(ctx, query, &mut universe, words_limit, locales)?;
+
+    let mut located_query_terms = None;
     let bucket_sort_output = if let Some(query_terms) = query_terms {
         let (graph, new_located_query_terms) = QueryGraph::from_query(ctx, &query_terms)?;
         located_query_terms = Some(new_located_query_terms);

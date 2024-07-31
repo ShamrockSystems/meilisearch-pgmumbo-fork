@@ -40,9 +40,13 @@ use charabia::normalizer::{CharNormalizer, CompatibilityDecompositionNormalizer}
 pub use filter_parser::{Condition, FilterCondition, Span, Token};
 use fxhash::{FxHasher32, FxHasher64};
 pub use grenad::CompressionType;
+pub use search::new::query_graph;
+pub use search::new::ranking_rules;
 pub use search::new::{
-    execute_search, filtered_universe, DefaultSearchLogger, GeoSortStrategy, SearchContext,
-    SearchLogger, VisualSearchLogger,
+    execute_search, filtered_universe, get_ranking_rules_for_placeholder_search,
+    get_ranking_rules_for_query_graph_search, resolve_query_terms, resolve_universe,
+    DefaultSearchLogger, GeoSortStrategy, LocatedQueryTerm, SearchContext, SearchLogger,
+    VisualSearchLogger,
 };
 use serde_json::Value;
 pub use thread_pool_no_abort::{PanicCatched, ThreadPoolNoAbort, ThreadPoolNoAbortBuilder};
